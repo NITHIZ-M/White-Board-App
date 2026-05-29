@@ -1,0 +1,6 @@
+{
+  "name": "ACE Board",
+  "description": "An interactive vector-based whiteboard application with infinite zoom, panning, custom shape controls, handwriting note stickies, and seamless local workspace exports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
