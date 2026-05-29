@@ -2821,6 +2821,7 @@ ${svgNodes}</svg>`;
             onDragOver={handleDragOver}
             onDrop={handleDrop}
             className="block w-full h-full"
+            style={{ touchAction: 'none' }}
           />
 
           {/* QUICK EDIT FLOATING INTERACTIVE MENU PANEL FOR SELECTED WHITEBOARD ELEMENTS */}
