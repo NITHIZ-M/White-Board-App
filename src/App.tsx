@@ -166,6 +166,18 @@ const makeWelcomeElements = (): BoardElement[] => {
   ];
 };
 
+const smoothPenPoints = (points: { x: number; y: number }[]): { x: number; y: number }[] => {
+  if (points.length < 3) return points;
+  const smoothed = [...points];
+  for (let i = 1; i < points.length - 1; i++) {
+    smoothed[i] = {
+      x: (points[i - 1].x + points[i].x + points[i + 1].x) / 3,
+      y: (points[i - 1].y + points[i].y + points[i + 1].y) / 3,
+    };
+  }
+  return smoothed;
+};
+
 const DEFAULT_PAGES: NotePage[] = [
   {
     id: 'default-onboarding',
@@ -348,7 +360,7 @@ export default function App() {
     );
   }, [activePageId]);
 
-  const debounceSyncRef = useRef<NodeJS.Timeout | null>(null);
+  const debounceSyncRef = useRef<any>(null);
   const debounceSyncViewport = useCallback(() => {
     if (debounceSyncRef.current) {
       clearTimeout(debounceSyncRef.current);
@@ -530,6 +542,46 @@ export default function App() {
       };
     });
   }, [activePageId, activePage?.elements]);
+
+  // Helper to commit current freehand pen/highlighter sketch stroke to elements state
+  const commitCurrentStroke = useCallback(() => {
+    if (isDrawing && (currentTool === 'pen' || currentTool === 'highlighter') && drawingPoints.length >= 2) {
+      // Smooth the sketch points to eliminate hand shaking/jittering automatically on release
+      const smoothed = smoothPenPoints(drawingPoints);
+
+      const minX = Math.min(...smoothed.map(p => p.x));
+      const maxX = Math.max(...smoothed.map(p => p.x));
+      const minY = Math.min(...smoothed.map(p => p.y));
+      const maxY = Math.max(...smoothed.map(p => p.y));
+
+      const newElId = generateId();
+      const newPenElement: BoardElement = {
+        id: newElId,
+        type: currentTool,
+        x: minX,
+        y: minY,
+        width: maxX - minX,
+        height: maxY - minY,
+        points: smoothed,
+        color,
+        fillColor: 'transparent',
+        strokeWidth: currentTool === 'highlighter' ? strokeWidth * 2.5 : strokeWidth,
+        strokeStyle,
+        opacity: currentTool === 'highlighter' ? 0.45 : 1.0,
+        createdAt: Date.now(),
+      };
+
+      saveHistoryState(activePage.elements);
+      setPages(prev =>
+        prev.map(p =>
+          p.id === activePageId ? { ...p, elements: [...p.elements, newPenElement], updatedAt: Date.now() } : p
+        )
+      );
+      setSelectedId(newElId);
+    }
+    setIsDrawing(false);
+    setDrawingPoints([]);
+  }, [isDrawing, currentTool, drawingPoints, color, strokeWidth, strokeStyle, activePage?.elements, activePageId, saveHistoryState]);
 
   // Load selected element's styles dynamically into the active state defaults
   useEffect(() => {
@@ -765,8 +817,15 @@ export default function App() {
           if (!el.points || el.points.length < 2) break;
           ctx.beginPath();
           ctx.moveTo(el.points[0].x, el.points[0].y);
-          for (let i = 1; i < el.points.length; i++) {
-            ctx.lineTo(el.points[i].x, el.points[i].y);
+          if (el.points.length === 2) {
+            ctx.lineTo(el.points[1].x, el.points[1].y);
+          } else {
+            for (let i = 1; i < el.points.length - 1; i++) {
+              const xc = (el.points[i].x + el.points[i + 1].x) / 2;
+              const yc = (el.points[i].y + el.points[i + 1].y) / 2;
+              ctx.quadraticCurveTo(el.points[i].x, el.points[i].y, xc, yc);
+            }
+            ctx.lineTo(el.points[el.points.length - 1].x, el.points[el.points.length - 1].y);
           }
           ctx.stroke();
           break;
@@ -891,7 +950,7 @@ export default function App() {
               ctx.drawImage(cachedImg, el.x, el.y, el.width, el.height);
             } else {
               if (!cachedImg) {
-                const img = new Image();
+                const img = new window.Image();
                 img.onload = () => {
                   drawAll();
                 };
@@ -941,8 +1000,15 @@ export default function App() {
         if (drawingPoints.length > 1) {
           ctx.beginPath();
           ctx.moveTo(drawingPoints[0].x, drawingPoints[0].y);
-          for (let i = 1; i < drawingPoints.length; i++) {
-            ctx.lineTo(drawingPoints[i].x, drawingPoints[i].y);
+          if (drawingPoints.length === 2) {
+            ctx.lineTo(drawingPoints[1].x, drawingPoints[1].y);
+          } else {
+            for (let i = 1; i < drawingPoints.length - 1; i++) {
+              const xc = (drawingPoints[i].x + drawingPoints[i + 1].x) / 2;
+              const yc = (drawingPoints[i].y + drawingPoints[i + 1].y) / 2;
+              ctx.quadraticCurveTo(drawingPoints[i].x, drawingPoints[i].y, xc, yc);
+            }
+            ctx.lineTo(drawingPoints[drawingPoints.length - 1].x, drawingPoints[drawingPoints.length - 1].y);
           }
           ctx.stroke();
         }
@@ -1091,7 +1157,27 @@ export default function App() {
     isDarkMode,
   ]);
 
-  // REDRAW EFFECT ON RESIZE AND CHANGES
+  // PREVENT NATIVE SCROLL AND ZOOM GESTURES ON CANVAS
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const preventDefault = (e: TouchEvent) => {
+      if (e.touches.length > 0) {
+        e.preventDefault();
+      }
+    };
+
+    canvas.addEventListener('touchstart', preventDefault, { passive: false });
+    canvas.addEventListener('touchmove', preventDefault, { passive: false });
+
+    return () => {
+      canvas.removeEventListener('touchstart', preventDefault);
+      canvas.removeEventListener('touchmove', preventDefault);
+    };
+  }, []);
+
+  // REDRAW EFFECT ON RESIZE AND CHANGES (ORIENTATIONS SETTLE AUTOMATICALLY)
   useEffect(() => {
     const handleResize = () => {
       const canvas = canvasRef.current;
@@ -1099,17 +1185,43 @@ export default function App() {
       const parent = canvas.parentElement;
       if (!parent) return;
 
+      // Get current center in world coordinates before resize
+      const prevDpr = window.devicePixelRatio || 1;
+      const prevWidth = canvas.width / prevDpr;
+      const prevHeight = canvas.height / prevDpr;
+
+      let worldCenter: Point | null = null;
+      if (prevWidth > 0 && prevHeight > 0) {
+        const { scale: s, offsetX: ox, offsetY: oy } = viewportRef.current;
+        worldCenter = {
+          x: (prevWidth / 2 - ox) / s,
+          y: (prevHeight / 2 - oy) / s,
+        };
+      }
+
       canvas.style.width = '100%';
       canvas.style.height = '100%';
 
       const dpr = window.devicePixelRatio || 1;
-      canvas.width = parent.clientWidth * dpr;
-      canvas.height = parent.clientHeight * dpr;
+      const newWidth = parent.clientWidth;
+      const newHeight = parent.clientHeight;
+      canvas.width = newWidth * dpr;
+      canvas.height = newHeight * dpr;
 
       const ctx = canvas.getContext('2d');
       if (ctx) {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       }
+
+      // Restore centered layout on screen ratio orientation updates
+      if (worldCenter) {
+        const { scale: s } = viewportRef.current;
+        const newOffsetX = newWidth / 2 - worldCenter.x * s;
+        const newOffsetY = newHeight / 2 - worldCenter.y * s;
+        setOffsetX(newOffsetX);
+        setOffsetY(newOffsetY);
+      }
+
       drawAll();
     };
 
@@ -1315,13 +1427,18 @@ export default function App() {
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     e.preventDefault();
 
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch (err) {
+      console.warn('Pointer capture failed:', err);
+    }
+
     const nativeEvent = e.nativeEvent;
     // Track pointer
     activePointersRef.current = [...activePointersRef.current.filter(p => p.pointerId !== nativeEvent.pointerId), nativeEvent];
 
     if (activePointersRef.current.length === 2) {
-      setIsDrawing(false);
-      setDrawingPoints([]);
+      commitCurrentStroke(); // Commit active pen stroke before pinch zoom
       setSelectedId(null);
       setMarqueeSelect(null);
 
@@ -1724,13 +1841,24 @@ export default function App() {
   };
 
   const handlePointerCancel = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch (err) {
+      // ignore
+    }
+    commitCurrentStroke(); // Auto-save stroke on cancel/interrupt
     activePointersRef.current = [];
     pinchStartDistRef.current = null;
-    setIsDrawing(false);
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const nativeEvent = e.nativeEvent;
+    
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch (err) {
+      // ignore
+    }
     
     // Remove pointer from active list
     activePointersRef.current = activePointersRef.current.filter(p => p.pointerId !== nativeEvent.pointerId);
@@ -1745,16 +1873,16 @@ export default function App() {
       return;
     }
 
-    setIsDrawing(false);
-
     const activeToolValue = currentTool;
 
     if (activeToolValue === 'pan') {
+      setIsDrawing(false);
       syncViewportToActivePage();
       return;
     }
 
     if (activeToolValue === 'select') {
+      setIsDrawing(false);
       setResizeHandle(null);
       if (marqueeSelect) {
         // Multi elements bounding select marquee hits
@@ -1795,46 +1923,12 @@ export default function App() {
     }
 
     if (activeToolValue === 'pen' || activeToolValue === 'highlighter') {
-      if (drawingPoints.length < 2) {
-        setDrawingPoints([]);
-        return;
-      }
-
-      // Bound calculation
-      const minX = Math.min(...drawingPoints.map(p => p.x));
-      const maxX = Math.max(...drawingPoints.map(p => p.x));
-      const minY = Math.min(...drawingPoints.map(p => p.y));
-      const maxY = Math.max(...drawingPoints.map(p => p.y));
-
-      const newElId = generateId();
-      const newPenElement: BoardElement = {
-        id: newElId,
-        type: activeToolValue,
-        x: minX,
-        y: minY,
-        width: maxX - minX,
-        height: maxY - minY,
-        points: drawingPoints,
-        color,
-        fillColor: 'transparent',
-        strokeWidth: activeToolValue === 'highlighter' ? strokeWidth * 2.5 : strokeWidth,
-        strokeStyle,
-        opacity: activeToolValue === 'highlighter' ? 0.45 : 1.0,
-        createdAt: Date.now(),
-      };
-
-      saveHistoryState(activePage.elements);
-      setPages(prev =>
-        prev.map(p =>
-          p.id === activePageId ? { ...p, elements: [...p.elements, newPenElement], updatedAt: Date.now() } : p
-        )
-      );
-      setDrawingPoints([]);
-      setSelectedId(newElId);
+      commitCurrentStroke();
       return;
     }
 
     if (['rectangle', 'ellipse', 'line', 'arrow'].includes(activeToolValue)) {
+      setIsDrawing(false);
       const worldEndpointCoord = getCoordinatesFromScreen(e.clientX, e.clientY);
       const rawWidth = worldEndpointCoord.x - startPoint.x;
       const rawHeight = worldEndpointCoord.y - startPoint.y;
@@ -2132,7 +2226,7 @@ ${svgNodes}</svg>`;
         const dataUrl = event.target?.result;
         if (dataUrl && typeof dataUrl === 'string') {
           compressImage(dataUrl).then(compressedUrl => {
-            const tempImg = new Image();
+            const tempImg = new window.Image();
             tempImg.onload = () => {
               const nativeWidth = tempImg.naturalWidth || 400;
               const nativeHeight = tempImg.naturalHeight || 300;
@@ -2188,7 +2282,7 @@ ${svgNodes}</svg>`;
     }
 
     compressImage(dataUrl).then(compressedUrl => {
-      const tempImg = new Image();
+      const tempImg = new window.Image();
       tempImg.onload = () => {
         const nativeWidth = tempImg.naturalWidth || 400;
         const nativeHeight = tempImg.naturalHeight || 300;
@@ -2253,7 +2347,7 @@ ${svgNodes}</svg>`;
             }
 
             compressImage(dataUrl).then(compressedUrl => {
-              const tempImg = new Image();
+              const tempImg = new window.Image();
               tempImg.onload = () => {
                 const nativeWidth = tempImg.naturalWidth || 400;
                 const nativeHeight = tempImg.naturalHeight || 300;
@@ -2302,17 +2396,7 @@ ${svgNodes}</svg>`;
   }, [activePageId, activePage?.elements, offsetX, offsetY, scale, snapToGrid, saveHistoryState, editingTextId]);
 
   // FLOAT EDIT PORT HANDLERS FOR THE SKETCH AND ELEMENTS SESSIONS
-  const smoothPenPoints = (points: { x: number; y: number }[]) => {
-    if (points.length < 3) return points;
-    const smoothed = [...points];
-    for (let i = 1; i < points.length - 1; i++) {
-      smoothed[i] = {
-        x: (points[i - 1].x + points[i].x + points[i + 1].x) / 3,
-        y: (points[i - 1].y + points[i].y + points[i + 1].y) / 3,
-      };
-    }
-    return smoothed;
-  };
+
 
   const handleSmoothSelectedSketch = () => {
     const selectedElement = activePage?.elements.find(el => el.id === selectedId);
@@ -2586,7 +2670,7 @@ ${svgNodes}</svg>`;
             </div>
           </div>
 
-          {/* RIGHT GROUP: Theme, Canvas Settings Dropdown, Guides */}
+          {/* RIGHT GROUP: Canvas Settings Dropdown */}
           <div className="flex items-center gap-2 pointer-events-auto relative">
             {/* Canvas settings popover */}
             <div className="relative">
@@ -2644,6 +2728,43 @@ ${svgNodes}</svg>`;
                       />
                     </div>
 
+                    {/* Theme Mode Toggle (In settings) */}
+                    <div className="flex items-center justify-between border-t border-slate-200/20 dark:border-slate-800/15 pt-3">
+                      <span className="text-[9px] uppercase tracking-wider font-mono font-bold text-slate-450 dark:text-slate-500">
+                        Theme Mode
+                      </span>
+                      <button
+                        onClick={() => setIsDarkMode(prev => !prev)}
+                        className="flex items-center gap-1.5 py-1 px-2.5 bg-slate-100/60 dark:bg-slate-800/70 hover:bg-slate-200/70 dark:hover:bg-slate-700 rounded-lg text-[10px] font-medium transition cursor-pointer text-slate-700 dark:text-slate-300"
+                      >
+                        {isDarkMode ? (
+                          <>
+                            <Sun className="w-3.5 h-3.5 text-amber-500" />
+                            <span>Light Mode</span>
+                          </>
+                        ) : (
+                          <>
+                            <Moon className="w-3.5 h-3.5 text-indigo-400" />
+                            <span>Dark Mode</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    {/* Keyboard Shortcuts Guides (In settings) */}
+                    <div className="border-t border-slate-200/20 dark:border-slate-800/15 pt-3">
+                      <button
+                        onClick={() => {
+                          setIsShortcutsOpen(true);
+                          setIsSettingsOpen(false);
+                        }}
+                        className="w-full flex items-center justify-center gap-1.5 py-1.5 px-3 bg-slate-100/60 dark:bg-slate-800/70 hover:bg-slate-200/70 dark:hover:bg-slate-700 rounded-lg text-[10px] font-semibold transition cursor-pointer text-slate-650 dark:text-slate-300"
+                      >
+                        <HelpCircle className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Open Keyboard Guides</span>
+                      </button>
+                    </div>
+
                     {/* Export Actions */}
                     <div className="border-t border-slate-200/20 dark:border-slate-800/15 pt-3">
                       <span className="block text-[9px] uppercase tracking-wider font-mono font-bold text-slate-450 dark:text-slate-500 mb-1.5">
@@ -2692,27 +2813,6 @@ ${svgNodes}</svg>`;
                 </>
               )}
             </div>
-
-            {/* Theme Selector */}
-            <button
-              id="btn-theme-selector"
-              onClick={() => setIsDarkMode(prev => !prev)}
-              className="p-2.5 bg-white/45 dark:bg-slate-950/45 backdrop-blur-xl border border-white/20 dark:border-white/5 hover:bg-white/60 dark:hover:bg-slate-900/60 rounded-xl shadow-lg transition text-slate-600 dark:text-slate-350 cursor-pointer"
-              title="Switch Day / Night style theme"
-            >
-              {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-            </button>
-
-            {/* Quick Shortcuts Modal opener */}
-            <button
-              id="btn-shortcuts-opener"
-              onClick={() => setIsShortcutsOpen(true)}
-              className="p-2.5 bg-white/45 dark:bg-slate-950/45 backdrop-blur-xl border border-white/20 dark:border-white/5 hover:bg-white/60 dark:hover:bg-slate-900/60 rounded-xl shadow-lg transition text-slate-600 dark:text-slate-350 flex items-center gap-1.5 cursor-pointer"
-              title="Whiteboard keyboard rules and info modal guides"
-            >
-              <HelpCircle className="w-4 h-4" />
-              <span className="text-xs font-mono font-medium hidden sm:inline">Guides</span>
-            </button>
           </div>
         </header>
 
@@ -2736,7 +2836,7 @@ ${svgNodes}</svg>`;
         </div>
 
         {/* RESPONSIVE FLOATING NAVIGATION DOCK (BOTTOM RIGHT CORES) */}
-        <div className="absolute top-20 right-4 md:top-auto md:bottom-6 md:right-6 z-10 flex flex-col items-center gap-2.5 pointer-events-auto">
+        <div className="absolute top-1/2 -translate-y-1/2 right-4 md:right-6 z-10 flex flex-col items-center gap-2.5 pointer-events-auto">
           {/* Touch Joystick Panner Hand Gripper */}
           <div 
             className="w-14 h-14 rounded-full bg-white/80 dark:bg-slate-900/80 backdrop-blur-2xl border border-slate-200/50 dark:border-slate-800/40 shadow-xl flex items-center justify-center relative select-none cursor-grab active:cursor-grabbing group overflow-visible"
@@ -2816,7 +2916,6 @@ ${svgNodes}</svg>`;
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerCancel}
-            onPointerLeave={handlePointerCancel}
             onWheel={handleWheel}
             onDragOver={handleDragOver}
             onDrop={handleDrop}
