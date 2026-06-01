@@ -1,5 +1,5 @@
 /**
- * Type declarations for the ACE Board Whiteboard Application
+ * Type declarations for the Doodle Space Application
  */
 
 export type Tool =

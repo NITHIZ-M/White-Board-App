@@ -10,12 +10,16 @@ import {
   Trash2,
   Image,
   Codepen,
-  ZoomIn,
-  ZoomOut,
   Sliders,
   Sparkles,
   Copy,
-  Hand,
+  User,
+  Pencil,
+  Highlighter,
+  Square,
+  Circle,
+  Minus,
+  ArrowUpRight,
 } from 'lucide-react';
 import { NotePage, BoardElement, Tool, GridType, StrokeStyle, Point } from './types';
 import {
@@ -31,9 +35,11 @@ import {
 import Toolbar from './components/Toolbar';
 import PageList from './components/PageList';
 import ShortcutsModal from './components/ShortcutsModal';
+import ProfileModal from './components/ProfileModal';
+import PermissionModal from './components/PermissionModal';
 
-const SAVE_KEY = 'ace_board_app_v1_pages';
-const THEME_KEY = 'ace_board_theme';
+const SAVE_KEY = 'doodle_space_v1_pages';
+const THEME_KEY = 'doodle_space_theme';
 
 const makeWelcomeElements = (): BoardElement[] => {
   return [
@@ -48,7 +54,7 @@ const makeWelcomeElements = (): BoardElement[] => {
       strokeWidth: 2,
       strokeStyle: 'solid',
       opacity: 1,
-      text: 'ACE Board',
+      text: 'Doodle Space',
       fontSize: 36,
       createdAt: Date.now(),
     },
@@ -63,7 +69,7 @@ const makeWelcomeElements = (): BoardElement[] => {
       strokeWidth: 1,
       strokeStyle: 'solid',
       opacity: 1,
-      text: 'Supercharged infinite zoom & pan vector sketchboard.',
+      text: 'Make a Doodle - infinite zoom & pan vector Doodle canvas.',
       fontSize: 16,
       createdAt: Date.now(),
     },
@@ -181,7 +187,7 @@ const smoothPenPoints = (points: { x: number; y: number }[]): { x: number; y: nu
 const DEFAULT_PAGES: NotePage[] = [
   {
     id: 'default-onboarding',
-    title: 'Welcome Board',
+    title: 'Welcome Doodle',
     createdAt: Date.now(),
     updatedAt: Date.now(),
     elements: makeWelcomeElements(),
@@ -245,6 +251,76 @@ export default function App() {
   });
   const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [profile, setProfile] = useState({
+    name: 'Guest Artist',
+    role: 'Creative Explorer'
+  });
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('doodle_user_profile');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setProfile({
+          name: parsed.name || 'Guest Artist',
+          role: parsed.role || 'Creative Explorer'
+        });
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, [isProfileOpen]);
+
+  // ORIENTATION STATE FOR LANDSCAPE SAFE AREAS
+  const [isLandscapeMobile, setIsLandscapeMobile] = useState(false);
+
+  useEffect(() => {
+    const checkOrientation = () => {
+      setIsLandscapeMobile(window.innerWidth > window.innerHeight && window.innerHeight < 600);
+    };
+    window.addEventListener('resize', checkOrientation);
+    checkOrientation();
+    return () => window.removeEventListener('resize', checkOrientation);
+  }, []);
+
+  // PERMISSIONS SYSTEM
+  const [permissions, setPermissions] = useState(() => {
+    try {
+      const saved = localStorage.getItem('doodle_space_permissions');
+      return saved ? JSON.parse(saved) : { storage: true, export: false, import: false };
+    } catch {
+      return { storage: true, export: false, import: false };
+    }
+  });
+
+  const [permissionModalOpen, setPermissionModalOpen] = useState(false);
+  const [permissionType, setPermissionType] = useState<'export' | 'import'>('export');
+  const [onPermissionGrantedCallback, setOnPermissionGrantedCallback] = useState<(() => void) | null>(null);
+
+  const handleRequestPermission = (type: 'export' | 'import', onGranted: () => void) => {
+    if (permissions[type]) {
+      onGranted();
+    } else {
+      setPermissionType(type);
+      setOnPermissionGrantedCallback(() => onGranted);
+      setPermissionModalOpen(true);
+    }
+  };
+
+  const handleGrantPermission = () => {
+    const updated = { ...permissions, [permissionType]: true };
+    setPermissions(updated);
+    try {
+      localStorage.setItem('doodle_space_permissions', JSON.stringify(updated));
+    } catch (e) {
+      console.warn('Failed to save permissions to localStorage', e);
+    }
+    if (onPermissionGrantedCallback) {
+      onPermissionGrantedCallback();
+    }
+    setOnPermissionGrantedCallback(null);
+  };
 
   // CURRENT WHITEBOARD PREFS
   const [currentTool, setTool] = useState<Tool>('pen');
@@ -427,7 +503,6 @@ export default function App() {
     e.currentTarget.releasePointerCapture(e.pointerId);
   };
 
-  // SMART AUTO-FIT CONTENT ADJUST VIEWPORTS TO SUPPORT ALL SCREEN RATIOS & FIXED ALLIGNMENTS
   const fitToScreen = useCallback(() => {
     if (!activePage || activePage.elements.length === 0) {
       setOffsetX(100);
@@ -1231,10 +1306,42 @@ export default function App() {
     return () => window.removeEventListener('resize', handleResize);
   }, [drawAll]);
 
-  // TRIGGER REDRAW MANUALLY COMPONENT IS MOUNTED OR PREFS CHANGED
+  // SCHEDULED RENDERING LOOP USING requestAnimationFrame FOR HIGH-FPS CANVAS DRAWING
+  const drawAllRef = useRef(drawAll);
   useEffect(() => {
-    drawAll();
+    drawAllRef.current = drawAll;
   }, [drawAll]);
+
+  useEffect(() => {
+    let frameId: number;
+    const scheduleDraw = () => {
+      frameId = requestAnimationFrame(() => {
+        drawAllRef.current();
+      });
+    };
+    scheduleDraw();
+    return () => {
+      if (frameId) cancelAnimationFrame(frameId);
+    };
+  }, [
+    activePage,
+    offsetX,
+    offsetY,
+    scale,
+    gridType,
+    selectedId,
+    marqueeSelect,
+    isDrawing,
+    drawingPoints,
+    startPoint,
+    lastScreenPoint,
+    strokeWidth,
+    color,
+    fillColor,
+    strokeStyle,
+    editingTextId,
+    isDarkMode,
+  ]);
 
   /**
    * KEYBOARD HOTKEYS MASTER HANDLER
@@ -1258,13 +1365,6 @@ export default function App() {
         setSelectedId(null);
       }
 
-      // 2. SPACE TO PAN TOGGLE
-      if (e.key === ' ' && !spacePressed.current) {
-        spacePressed.current = true;
-        // Temporary switch to pan tool
-        setTool('pan');
-      }
-
       // 3. UNDO / REDO CONTROLS
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
@@ -1279,9 +1379,6 @@ export default function App() {
       switch (e.key.toLowerCase()) {
         case 'v':
           setTool('select');
-          break;
-        case 'h':
-          setTool('pan');
           break;
         case 'p':
           setTool('pen');
@@ -1314,10 +1411,7 @@ export default function App() {
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === ' ') {
-        spacePressed.current = false;
-        setTool('select'); // fall back to mouse pointer
-      }
+      // Keyup handling
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -1403,22 +1497,6 @@ export default function App() {
   // ZOOM WHEEL HANDLER FOR GENTLE ZOOM
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const cursorX = e.clientX - rect.left;
-    const cursorY = e.clientY - rect.top;
-
-    if (e.ctrlKey) {
-      // Zoom centered on cursor
-      const multiplier = e.deltaY > 0 ? 0.92 : 1.08;
-      executeZoom(multiplier, cursorX, cursorY);
-    } else {
-      // Regular scroll wheel translates to panning
-      setOffsetX(prev => prev - e.deltaX * 0.95);
-      setOffsetY(prev => prev - e.deltaY * 0.95);
-      debounceSyncViewport();
-    }
   };
 
   /**
@@ -1459,9 +1537,7 @@ export default function App() {
       return;
     }
 
-    // Catch middle click to force pan dragging
-    const isMiddleClick = e.button === 1;
-    const activeToolValue = isMiddleClick ? 'pan' : currentTool;
+    const activeToolValue = currentTool;
 
     if (editingTextId !== null) {
       dismissTextEditing();
@@ -1543,10 +1619,11 @@ export default function App() {
       // Trigger instant placement text editing
       setIsDrawing(false);
       const hit = getElementAtPosition(worldCoord);
-      if (hit && hit.type === 'text') {
-        // Double clicked or editing click on text
+      if (hit && (hit.type === 'text' || hit.type === 'sticky')) {
+        // Double clicked or editing click on text/sticky
         setEditingTextId(hit.id);
-        setEditingTextVal(hit.text || '');
+        const isDefaultText = hit.text && hit.text.toLowerCase() === 'clean notes';
+        setEditingTextVal(isDefaultText ? '' : hit.text || '');
         setEditingTextPos({ x: hit.x, y: hit.y });
       } else {
         // Create new text block
@@ -1613,7 +1690,7 @@ export default function App() {
         )
       );
       setEditingTextId(newId);
-      setEditingTextVal('Clean notes');
+      setEditingTextVal('');
       setEditingTextPos({ x: snappedStickyX, y: snappedStickyY });
       return;
     }
@@ -1673,19 +1750,7 @@ export default function App() {
     const currentScreenPoint = { x: e.clientX, y: e.clientY };
     const worldPoint = getCoordinatesFromScreen(e.clientX, e.clientY);
 
-    // SCREEN DELTA TO DO SEAMLESS GRID PANNING
-    const deltaX = currentScreenPoint.x - lastScreenPoint.x;
-    const deltaY = currentScreenPoint.y - lastScreenPoint.y;
-
-    const isMiddleClick = e.buttons === 4; // scroll wheel push down
-    const activeToolValue = isMiddleClick ? 'pan' : currentTool;
-
-    if (activeToolValue === 'pan') {
-      setOffsetX(prev => prev + deltaX);
-      setOffsetY(prev => prev + deltaY);
-      setLastScreenPoint(currentScreenPoint);
-      return;
-    }
+    const activeToolValue = currentTool;
 
     if (activeToolValue === 'select') {
       if (resizeHandle && selectedId) {
@@ -1962,6 +2027,18 @@ export default function App() {
     }
   };
 
+  const handleDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const worldCoord = getCoordinatesFromScreen(e.clientX, e.clientY);
+    const hit = getElementAtPosition(worldCoord);
+    if (hit && (hit.type === 'text' || hit.type === 'sticky')) {
+      setEditingTextId(hit.id);
+      const isDefaultText = hit.text && hit.text.toLowerCase() === 'clean notes';
+      setEditingTextVal(isDefaultText ? '' : hit.text || '');
+      setEditingTextPos({ x: hit.x, y: hit.y });
+    }
+  };
+
   /**
    * COMMIT ON-SCREEN TEXT EDIT CHANGES
    */
@@ -1972,19 +2049,32 @@ export default function App() {
     setPages(prev =>
       prev.map(p => {
         if (p.id !== activePageId) return p;
+        
+        const el = p.elements.find(e => e.id === editingTextId);
+        if (!el) return p;
+
         if (!trimmedValue) {
+          if (el.type === 'sticky') {
+            return {
+              ...p,
+              elements: p.elements.map(e => {
+                if (e.id !== editingTextId) return e;
+                return { ...e, text: 'Clean notes' };
+              }),
+            };
+          }
           // Remove if completely blank
-          return { ...p, elements: p.elements.filter(el => el.id !== editingTextId) };
+          return { ...p, elements: p.elements.filter(e => e.id !== editingTextId) };
         }
         return {
           ...p,
-          elements: p.elements.map(el => {
-            if (el.id !== editingTextId) return el;
+          elements: p.elements.map(item => {
+            if (item.id !== editingTextId) return item;
             return {
-              ...el,
+              ...item,
               text: trimmedValue,
-              width: el.type === 'sticky' ? el.width : 280, // standardized widths
-              height: el.type === 'sticky' ? el.height : Math.max(40, Math.ceil(trimmedValue.length / 15) * 24),
+              width: item.type === 'sticky' ? item.width : 280, // standardized widths
+              height: item.type === 'sticky' ? item.height : Math.max(40, Math.ceil(trimmedValue.length / 15) * 24),
             };
           }),
         };
@@ -2005,7 +2095,7 @@ export default function App() {
   };
 
   const clearCanvas = () => {
-    if (confirm('Clear all drawings and notes on this whiteboard?')) {
+    if (confirm('Clear all drawings and notes on this Doodle?')) {
       saveHistoryState(activePage.elements);
       setPages(prev =>
         prev.map(p => (p.id === activePageId ? { ...p, elements: [], updatedAt: Date.now() } : p))
@@ -2021,7 +2111,7 @@ export default function App() {
     const freshId = generateId();
     const cleanPage: NotePage = {
       id: freshId,
-      title: titleText || `Sketch Board ${pages.length + 1}`,
+      title: titleText || `Sketch Doodle ${pages.length + 1}`,
       createdAt: Date.now(),
       updatedAt: Date.now(),
       elements: [],
@@ -2060,151 +2150,11 @@ export default function App() {
     const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(pages, null, 2));
     const dlAnchorElem = document.createElement('a');
     dlAnchorElem.setAttribute('href', dataStr);
-    dlAnchorElem.setAttribute('download', `kotlin_board_backup_${Date.now()}.json`);
+    dlAnchorElem.setAttribute('download', `doodle_space_backup_${Date.now()}.json`);
     dlAnchorElem.click();
   };
 
-  /**
-   * IMAGE EXPORT: RASTER PNG VIEWPORT
-   */
-  const exportToPNG = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const link = document.createElement('a');
-    link.download = `${activePage.title.replace(/\s+/g, '_')}_whiteboard.png`;
-    link.href = canvas.toDataURL('image/png');
-    link.click();
-  };
 
-  /**
-   * EXPORT TO VECTOR SVG CODE
-   */
-  const exportToSVG = () => {
-    const elements = activePage?.elements || [];
-    if (elements.length === 0) {
-      alert('Whiteboard is empty, draw something to export SVG.');
-      return;
-    }
-
-    // Capture overall boundary
-    let minX = Math.min(...elements.map(e => e.x));
-    let minY = Math.min(...elements.map(e => e.y));
-    let maxX = Math.max(...elements.map(e => e.x + e.width));
-    let maxY = Math.max(...elements.map(e => e.y + e.height));
-
-    // Pad a little bit
-    minX -= 40;
-    minY -= 40;
-    maxX += 40;
-    maxY += 40;
-
-    const width = maxX - minX;
-    const height = maxY - minY;
-
-    let svgNodes = '';
-
-    elements.forEach(el => {
-      const stroke = el.color;
-      const fill = el.fillColor === 'transparent' ? 'none' : el.fillColor || 'none';
-      const sw = el.strokeWidth;
-      const styleAttr =
-        el.strokeStyle === 'dashed'
-          ? 'stroke-dasharray="8,6"'
-          : el.strokeStyle === 'dotted'
-          ? 'stroke-dasharray="2,4"'
-          : '';
-
-      switch (el.type) {
-        case 'rectangle':
-          svgNodes += `  <rect x="${el.x}" y="${el.y}" width="${el.width}" height="${el.height}" stroke="${stroke}" fill="${fill}" stroke-width="${sw}" ${styleAttr} opacity="${el.opacity}" />\n`;
-          break;
-
-        case 'ellipse':
-          svgNodes += `  <ellipse cx="${el.x + el.width / 2}" cy="${el.y + el.height / 2}" rx="${Math.abs(el.width / 2)}" ry="${Math.abs(el.height / 2)}" stroke="${stroke}" fill="${fill}" stroke-width="${sw}" ${styleAttr} opacity="${el.opacity}" />\n`;
-          break;
-
-        case 'line':
-          svgNodes += `  <line x1="${el.x}" y1="${el.y}" x2="${el.x + el.width}" y2="${el.y + el.height}" stroke="${stroke}" stroke-width="${sw}" ${styleAttr} opacity="${el.opacity}" />\n`;
-          break;
-
-        case 'arrow': {
-          const angle = Math.atan2(el.height, el.width);
-          const toX = el.x + el.width;
-          const toY = el.y + el.height;
-          const headLength = Math.max(10, el.strokeWidth * 3);
-          const head1X = toX - headLength * Math.cos(angle - Math.PI / 6);
-          const head1Y = toY - headLength * Math.sin(angle - Math.PI / 6);
-          const head2X = toX - headLength * Math.cos(angle + Math.PI / 6);
-          const head2Y = toY - headLength * Math.sin(angle + Math.PI / 6);
-
-          svgNodes += `  <g stroke="${stroke}" stroke-width="${sw}" opacity="${el.opacity}">\n`;
-          svgNodes += `    <line x1="${el.x}" y1="${el.y}" x2="${toX}" y2="${toY}" ${styleAttr} />\n`;
-          svgNodes += `    <polygon points="${toX},${toY} ${head1X},${head1Y} ${head2X},${head2Y}" fill="${stroke}" stroke="none" />\n`;
-          svgNodes += `  </g>\n`;
-          break;
-        }
-
-        case 'pen':
-        case 'highlighter': {
-          if (el.points && el.points.length > 1) {
-            let pathD = `M ${el.points[0].x} ${el.points[0].y}`;
-            for (let i = 1; i < el.points.length; i++) {
-              pathD += ` L ${el.points[i].x} ${el.points[i].y}`;
-            }
-            svgNodes += `  <path d="${pathD}" stroke="${stroke}" fill="none" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" opacity="${el.opacity}" />\n`;
-          }
-          break;
-        }
-
-        case 'text': {
-          if (el.text) {
-            svgNodes += `  <text x="${el.x}" y="${el.y + (el.fontSize || 16)}" fill="${stroke}" font-family="sans-serif" font-size="${el.fontSize || 16}" opacity="${el.opacity}">\n`;
-            svgNodes += `    ${el.text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}\n`;
-            svgNodes += `  </text>\n`;
-          }
-          break;
-        }
-
-        case 'sticky': {
-          svgNodes += `  <g opacity="${el.opacity}">\n`;
-          svgNodes += `    <rect x="${el.x}" y="${el.y}" width="${el.width}" height="${el.height}" rx="8" fill="${el.fillColor}" stroke="${stroke}" stroke-width="1.5" />\n`;
-          if (el.text) {
-            svgNodes += `    <text x="${el.x + 12}" y="${el.y + 24}" fill="#0f172a" font-family="sans-serif" font-size="${el.fontSize || 14}">\n`;
-            svgNodes += `      ${el.text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}\n`;
-            svgNodes += `    </text>\n`;
-          }
-          svgNodes += `  </g>\n`;
-          break;
-        }
-
-        case 'image': {
-          if (el.text) {
-            svgNodes += `  <image href="${el.text}" x="${el.x}" y="${el.y}" width="${el.width}" height="${el.height}" opacity="${el.opacity}" />\n`;
-          }
-          break;
-        }
-
-        default:
-          break;
-      }
-    });
-
-    const fullSvgString = `<?xml version="1.0" encoding="utf-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="${minX} ${minY} ${width} ${height}" width="${width}" height="${height}">
-  <style>
-    text { font-family: system-ui, -apple-system, sans-serif; }
-  </style>
-${svgNodes}</svg>`;
-
-    const svgBlob = new Blob([fullSvgString], { type: 'image/svg+xml;charset=utf-8' });
-    const svgUrl = URL.createObjectURL(svgBlob);
-    const downloadLink = document.createElement('a');
-    downloadLink.href = svgUrl;
-    downloadLink.download = `${activePage.title.replace(/\s+/g, '_')}_vector.svg`;
-    document.body.appendChild(downloadLink);
-    downloadLink.click();
-    document.body.removeChild(downloadLink);
-  };
 
   // DRAG & DROP & PASTE STITCH GRAPHICS FUNCTIONS
   const handleDragOver = (e: React.DragEvent<HTMLCanvasElement>) => {
@@ -2580,37 +2530,55 @@ ${svgNodes}</svg>`;
     const pNW = getWorldToScreen(minX, minY);
     const pSE = getWorldToScreen(maxX, maxY);
 
-    // Float menu exactly above the selection box, or centered
-    const top = Math.max(90, pNW.y - 56);
-    const left = Math.max(16, Math.min(window.innerWidth - 380, (pNW.x + pSE.x) / 2 - 170));
+    // Float menu exactly above the selection box, or centered, with safe boundary limits
+    let top = pNW.y - 50;
+    // If it overlaps the top header, place it below the selected element
+    if (top < 70) {
+      top = pSE.y + 15;
+    }
+    // If it overflows the bottom of the screen, clamp it
+    if (top > window.innerHeight - 85) {
+      top = window.innerHeight - 135;
+    }
+
+    let left = (pNW.x + pSE.x) / 2 - 120;
+    const menuWidth = (isLandscapeMobile || window.innerWidth < 640) ? 250 : 360;
+    left = Math.max(10, Math.min(window.innerWidth - menuWidth - 10, left));
+    
     floatMenuPos = { top, left };
   }
+
+  const headerLeftClass = (isSidebarOpen && (window.innerWidth < 768 || isLandscapeMobile))
+    ? isLandscapeMobile 
+      ? "left-[calc(1rem+240px+env(safe-area-inset-left,0px))]"
+      : "left-[calc(1rem+288px+env(safe-area-inset-left,0px))]"
+    : "left-[calc(1rem+env(safe-area-inset-left,0px))]";
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#f8fafc] dark:bg-slate-950 text-slate-800 dark:text-slate-100 font-sans">
       {/* SIDEBAR FOR NOTES ALBUM (RESPONSIVE DRAWER OVERLAY ON MOBILE) */}
       {isSidebarOpen && (
         <>
-          {/* Backdrop on mobile */}
+          {/* Backdrop on mobile or mobile landscape */}
           <div
-            className="md:hidden fixed inset-0 z-30 bg-slate-950/25 backdrop-blur-[1.5px]"
+            className={`${isLandscapeMobile ? 'fixed' : 'md:hidden fixed'} inset-0 z-30 bg-slate-950/25 backdrop-blur-[1.5px]`}
             onClick={() => setIsSidebarOpen(false)}
           />
-          <div className="fixed md:relative inset-y-0 left-0 z-40 md:z-auto h-full shadow-2xl md:shadow-none bg-[#f8fafc] dark:bg-slate-950 animate-slide-in">
+          <div className={`${isLandscapeMobile ? 'fixed z-40' : 'fixed md:relative z-40 md:z-auto'} inset-y-0 left-0 h-full shadow-2xl md:shadow-none bg-[#f8fafc] dark:bg-slate-950 animate-slide-in pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] pl-[env(safe-area-inset-left,0px)] border-r border-slate-200/40 dark:border-slate-800/20`}>
             <PageList
               pages={pages}
               activePageId={activePageId}
               onSelectPage={(id) => {
                 syncViewportToActivePage();
                 setActivePageId(id);
-                if (window.innerWidth < 768) {
+                if (window.innerWidth < 768 || isLandscapeMobile) {
                   setIsSidebarOpen(false);
                 }
               }}
               onCreatePage={(title) => {
                 syncViewportToActivePage();
                 createNewBoardPage(title);
-                if (window.innerWidth < 768) {
+                if (window.innerWidth < 768 || isLandscapeMobile) {
                   setIsSidebarOpen(false);
                 }
               }}
@@ -2618,6 +2586,12 @@ ${svgNodes}</svg>`;
               onDeletePage={deleteBoardPage}
               onImportWorkspace={importFullWorkspace}
               onExportWorkspace={exportFullWorkspace}
+              profileName={profile.name}
+              profileRole={profile.role}
+              onOpenProfile={() => setIsProfileOpen(true)}
+              isLandscapeMobile={isLandscapeMobile}
+              permissions={permissions}
+              onRequestPermission={handleRequestPermission}
             />
           </div>
         </>
@@ -2625,285 +2599,188 @@ ${svgNodes}</svg>`;
 
       {/* WEB APPLICATION CANVAS STAGE */}
       <div className="relative flex-1 flex flex-col h-full overflow-hidden">
-        {/* HEADER BRAND & STATS */}
-        <header className="absolute top-4 left-4 right-4 z-20 flex flex-wrap items-center justify-between gap-3 pointer-events-none">
-          {/* LEFT GROUP: Toggle, Title, Undo, Redo */}
-          <div className="flex items-center gap-2 pointer-events-auto">
-            {/* Sidebar Toggle Button */}
-            <button
-              id="btn-toggle-sidebar"
-              onClick={() => setIsSidebarOpen(prev => !prev)}
-              className="p-2.5 bg-white/45 dark:bg-slate-950/45 backdrop-blur-xl border border-white/20 dark:border-white/5 hover:bg-white/60 dark:hover:bg-slate-900/50 rounded-xl shadow-lg transition active:scale-95 text-slate-600 dark:text-slate-350 cursor-pointer"
-              title="Toggle Notebook Slider"
-            >
-              {isSidebarOpen ? <ChevronRight className="w-5 h-5 rotate-180" /> : <Menu className="w-5 h-5" />}
-            </button>
+        {/* HEADER BRAND & STATS (LEFT COMPONENT) */}
+        <header className={`absolute top-[calc(1rem+env(safe-area-inset-top,0px))] ${headerLeftClass} z-20 flex items-center gap-2 pointer-events-auto transition-all duration-300`}>
+          {/* Sidebar Toggle Button */}
+          <button
+            id="btn-toggle-sidebar"
+            onClick={() => setIsSidebarOpen(prev => !prev)}
+            className="p-2.5 bg-white/45 dark:bg-slate-950/45 backdrop-blur-xl border border-white/20 dark:border-white/5 hover:bg-white/60 dark:hover:bg-slate-900/50 rounded-xl shadow-lg transition active:scale-95 text-slate-600 dark:text-slate-350 cursor-pointer"
+            title="Toggle Notebook Slider"
+          >
+            {isSidebarOpen ? <ChevronRight className="w-5 h-5 rotate-180" /> : <Menu className="w-5 h-5" />}
+          </button>
 
-            {/* Title Board detail */}
-            <div className="bg-white/45 dark:bg-slate-950/45 backdrop-blur-xl border border-white/20 dark:border-white/5 rounded-xl px-3.5 py-1.5 shadow-lg flex items-center gap-2">
-              <span className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate max-w-28 sm:max-w-44">
-                {activePage?.title || 'Whiteboard'}
-              </span>
-              <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
-            </div>
-
-            {/* Undo / Redo in Header */}
-            <div className="bg-white/45 dark:bg-slate-950/45 backdrop-blur-xl border border-white/20 dark:border-white/5 rounded-xl p-1 shadow-lg flex items-center gap-0.5">
-              <button
-                id="header-btn-undo"
-                onClick={handleUndo}
-                disabled={!history[activePageId]?.past?.length}
-                className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-600 dark:text-slate-350 hover:bg-white/40 dark:hover:bg-slate-900/40 disabled:opacity-30 disabled:cursor-not-allowed transition"
-                title="Undo (Ctrl+Z)"
-              >
-                <Undo2 className="w-4 h-4" />
-              </button>
-              <button
-                id="header-btn-redo"
-                onClick={handleRedo}
-                disabled={!history[activePageId]?.future?.length}
-                className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-600 dark:text-slate-350 hover:bg-white/40 dark:hover:bg-slate-900/40 disabled:opacity-30 disabled:cursor-not-allowed transition"
-                title="Redo (Ctrl+Y)"
-              >
-                <Redo2 className="w-4 h-4" />
-              </button>
-            </div>
+          {/* Title Board detail */}
+          <div className="bg-white/45 dark:bg-slate-950/45 backdrop-blur-xl border border-white/20 dark:border-white/5 rounded-xl px-3.5 py-1.5 shadow-lg flex items-center gap-2">
+            <span className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate max-w-28 sm:max-w-44 font-mono uppercase">
+              {activePage?.title || 'Doodle Board'}
+            </span>
+            <div className="w-1.5 h-1.5 bg-violet-500 rounded-full animate-pulse" />
           </div>
 
-          {/* RIGHT GROUP: Canvas Settings Dropdown */}
-          <div className="flex items-center gap-2 pointer-events-auto relative">
-            {/* Canvas settings popover */}
-            <div className="relative">
-              <button
-                id="btn-canvas-settings"
-                onClick={() => setIsSettingsOpen(prev => !prev)}
-                className={`p-2.5 backdrop-blur-xl border rounded-xl shadow-lg transition flex items-center gap-1.5 cursor-pointer ${
-                  isSettingsOpen
-                    ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-950 border-transparent'
-                    : 'bg-white/45 dark:bg-slate-950/45 border-white/20 dark:border-white/5 text-slate-600 dark:text-slate-350 hover:bg-white/60 dark:hover:bg-slate-900/60'
-                }`}
-                title="Canvas Settings & Actions"
-              >
-                <Sliders className="w-4 h-4" />
-                <span className="text-xs font-mono font-medium hidden sm:inline">Settings</span>
-              </button>
-
-              {/* DROPDOWN MENU */}
-              {isSettingsOpen && (
-                <>
-                  <div className="fixed inset-0 z-10" onClick={() => setIsSettingsOpen(false)} />
-                  <div className="absolute right-0 mt-2 w-60 z-20 bg-white/90 dark:bg-slate-900/95 backdrop-blur-2xl rounded-2xl p-4 shadow-2xl border border-slate-200/40 dark:border-slate-800/25 flex flex-col gap-3.5 animate-scale-up text-xs">
-                    {/* Grid Selection */}
-                    <div>
-                      <span className="block text-[9px] uppercase tracking-wider font-mono font-bold text-slate-450 dark:text-slate-500 mb-1.5">
-                        Background Grid
-                      </span>
-                      <div className="flex gap-1 bg-slate-100/40 dark:bg-slate-950/40 p-0.5 rounded-lg border border-slate-200/30 dark:border-slate-800/10">
-                        {(['none', 'dots', 'lines'] as GridType[]).map(type => (
-                          <button
-                            key={type}
-                            onClick={() => setGridType(type)}
-                            className={`flex-1 py-1 text-[10px] font-semibold rounded-md capitalize transition ${
-                              gridType === type
-                                ? 'bg-white dark:bg-slate-800 text-slate-950 dark:text-white shadow-sm font-bold'
-                                : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 font-normal'
-                            }`}
-                          >
-                            {type}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Snap To Grid Toggle */}
-                    <div className="flex items-center justify-between border-t border-slate-200/20 dark:border-slate-800/15 pt-3">
-                      <span className="text-[9px] uppercase tracking-wider font-mono font-bold text-slate-450 dark:text-slate-500">
-                        Snap to Grid
-                      </span>
-                      <input
-                        type="checkbox"
-                        checked={snapToGrid}
-                        onChange={e => setSnapToGrid(e.target.checked)}
-                        className="w-4 h-4 accent-slate-800 dark:accent-white rounded border-slate-300 dark:bg-slate-800 cursor-pointer"
-                      />
-                    </div>
-
-                    {/* Theme Mode Toggle (In settings) */}
-                    <div className="flex items-center justify-between border-t border-slate-200/20 dark:border-slate-800/15 pt-3">
-                      <span className="text-[9px] uppercase tracking-wider font-mono font-bold text-slate-450 dark:text-slate-500">
-                        Theme Mode
-                      </span>
-                      <button
-                        onClick={() => setIsDarkMode(prev => !prev)}
-                        className="flex items-center gap-1.5 py-1 px-2.5 bg-slate-100/60 dark:bg-slate-800/70 hover:bg-slate-200/70 dark:hover:bg-slate-700 rounded-lg text-[10px] font-medium transition cursor-pointer text-slate-700 dark:text-slate-300"
-                      >
-                        {isDarkMode ? (
-                          <>
-                            <Sun className="w-3.5 h-3.5 text-amber-500" />
-                            <span>Light Mode</span>
-                          </>
-                        ) : (
-                          <>
-                            <Moon className="w-3.5 h-3.5 text-indigo-400" />
-                            <span>Dark Mode</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
-
-                    {/* Keyboard Shortcuts Guides (In settings) */}
-                    <div className="border-t border-slate-200/20 dark:border-slate-800/15 pt-3">
-                      <button
-                        onClick={() => {
-                          setIsShortcutsOpen(true);
-                          setIsSettingsOpen(false);
-                        }}
-                        className="w-full flex items-center justify-center gap-1.5 py-1.5 px-3 bg-slate-100/60 dark:bg-slate-800/70 hover:bg-slate-200/70 dark:hover:bg-slate-700 rounded-lg text-[10px] font-semibold transition cursor-pointer text-slate-650 dark:text-slate-300"
-                      >
-                        <HelpCircle className="w-3.5 h-3.5 text-slate-500" />
-                        <span>Open Keyboard Guides</span>
-                      </button>
-                    </div>
-
-                    {/* Export Actions */}
-                    <div className="border-t border-slate-200/20 dark:border-slate-800/15 pt-3">
-                      <span className="block text-[9px] uppercase tracking-wider font-mono font-bold text-slate-450 dark:text-slate-500 mb-1.5">
-                        Export Board
-                      </span>
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          onClick={() => {
-                            exportToPNG();
-                            setIsSettingsOpen(false);
-                          }}
-                          className="flex items-center justify-center gap-1 py-1.5 px-2 bg-slate-100/60 dark:bg-slate-800/70 hover:bg-slate-200/70 dark:hover:bg-slate-700 rounded-lg text-[11px] font-medium transition cursor-pointer"
-                        >
-                          <Image className="w-3.5 h-3.5" />
-                          <span>PNG</span>
-                        </button>
-                        <button
-                          onClick={() => {
-                            exportToSVG();
-                            setIsSettingsOpen(false);
-                          }}
-                          className="flex items-center justify-center gap-1 py-1.5 px-2 bg-slate-100/60 dark:bg-slate-800/70 hover:bg-slate-200/70 dark:hover:bg-slate-700 rounded-lg text-[11px] font-medium transition cursor-pointer"
-                        >
-                          <Codepen className="w-3.5 h-3.5" />
-                          <span>SVG</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Reset Canvas */}
-                    <div className="border-t border-slate-200/20 dark:border-slate-800/15 pt-2">
-                      <button
-                        onClick={() => {
-                          if (confirm('Are you sure you want to clear your entire whiteboard canvas?')) {
-                            clearCanvas();
-                            setIsSettingsOpen(false);
-                          }
-                        }}
-                        className="w-full flex items-center justify-center gap-1.5 py-2 bg-red-500 hover:bg-red-650 text-white font-medium rounded-lg text-[11px] hover:scale-[1.01] transition active:scale-95 cursor-pointer"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>Clear Board</span>
-                      </button>
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
+          {/* Undo / Redo in Header */}
+          <div className="bg-white/45 dark:bg-slate-950/45 backdrop-blur-xl border border-white/20 dark:border-white/5 rounded-xl p-1 shadow-lg flex items-center gap-0.5">
+            <button
+              id="header-btn-undo"
+              onClick={handleUndo}
+              disabled={!history[activePageId]?.past?.length}
+              className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-600 dark:text-slate-350 hover:bg-white/40 dark:hover:bg-slate-900/40 disabled:opacity-30 disabled:cursor-not-allowed transition"
+              title="Undo (Ctrl+Z)"
+            >
+              <Undo2 className="w-4 h-4" />
+            </button>
+            <button
+              id="header-btn-redo"
+              onClick={handleRedo}
+              disabled={!history[activePageId]?.future?.length}
+              className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-600 dark:text-slate-350 hover:bg-white/40 dark:hover:bg-slate-900/40 disabled:opacity-30 disabled:cursor-not-allowed transition"
+              title="Redo (Ctrl+Y)"
+            >
+              <Redo2 className="w-4 h-4" />
+            </button>
           </div>
         </header>
 
-        {/* FLOAT BAR TOOLBAR BOTTOM CENTERED (Simplified and Optimized single bar) */}
-        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 flex flex-col items-center gap-3 w-max max-w-[92vw]">
-          <Toolbar
-            currentTool={currentTool}
-            setTool={handleQuickPresetSelection}
-            color={color}
-            setColor={changeColor}
-            fillColor={fillColor}
-            setFillColor={changeFillColor}
-            strokeWidth={strokeWidth}
-            setStrokeWidth={changeStrokeWidth}
-            strokeStyle={strokeStyle}
-            setStrokeStyle={changeStrokeStyle}
-            fontSize={fontSize}
-            setFontSize={changeFontSize}
-            onAddImage={handleAddImage}
-          />
-        </div>
-
-        {/* RESPONSIVE FLOATING NAVIGATION DOCK (BOTTOM RIGHT CORES) */}
-        <div className="absolute top-1/2 -translate-y-1/2 right-4 md:right-6 z-10 flex flex-col items-center gap-2.5 pointer-events-auto">
-          {/* Touch Joystick Panner Hand Gripper */}
-          <div 
-            className="w-14 h-14 rounded-full bg-white/80 dark:bg-slate-900/80 backdrop-blur-2xl border border-slate-200/50 dark:border-slate-800/40 shadow-xl flex items-center justify-center relative select-none cursor-grab active:cursor-grabbing group overflow-visible"
-            title="Hand Gripper joystick: Hold & drag to pan board in any direction instantly"
-          >
-            {/* Compass guides indicators */}
-            <div className="absolute inset-1 border border-dashed border-slate-200/40 dark:border-slate-800/20 rounded-full pointer-events-none" />
-            <div className="absolute top-1 text-[7px] text-slate-400 font-bold tracking-wider select-none pointer-events-none uppercase">U</div>
-            <div className="absolute bottom-1 text-[7px] text-slate-400 font-bold tracking-wider select-none pointer-events-none uppercase">D</div>
-            <div className="absolute left-1.5 text-[7px] text-slate-400 font-bold tracking-wider select-none pointer-events-none uppercase">L</div>
-            <div className="absolute right-1.5 text-[7px] text-slate-400 font-bold tracking-wider select-none pointer-events-none uppercase">R</div>
-            
-            {/* Visual joystick handle knob */}
-            <div
-              onPointerDown={handleJoystickDown}
-              onPointerMove={handleJoystickMove}
-              onPointerUp={handleJoystickUp}
-              className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${
-                isGripping 
-                  ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 scale-105 shadow-md shadow-slate-950/20' 
-                  : 'bg-white dark:bg-slate-800 text-slate-650 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-750 shadow-sm'
+        {/* FIXED SETTINGS BUTTON IN THE TOP RIGHT CORNER */}
+        <div className="absolute top-[calc(1rem+env(safe-area-inset-top,0px))] right-[calc(1rem+env(safe-area-inset-right,0px))] z-20 pointer-events-auto">
+          {/* Canvas settings popover */}
+          <div className="relative">
+            <button
+              id="btn-canvas-settings"
+              onClick={() => setIsSettingsOpen(prev => !prev)}
+              className={`p-2.5 backdrop-blur-xl border rounded-xl shadow-lg transition flex items-center gap-1.5 cursor-pointer ${
+                isSettingsOpen
+                  ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-950 border-transparent'
+                  : 'bg-white/45 dark:bg-slate-950/45 border-white/20 dark:border-white/5 text-slate-600 dark:text-slate-350 hover:bg-white/60 dark:hover:bg-slate-900/60'
               }`}
-              style={{
-                transform: `translate(${joyPos.x}px, ${joyPos.y}px)`,
-                touchAction: 'none'
-              }}
+              title="Canvas Settings & Actions"
             >
-              <Hand className={`w-4 h-4 ${isGripping ? 'animate-pulse' : ''}`} />
-            </div>
+              <Sliders className="w-4 h-4" />
+              <span className="text-xs font-mono font-medium hidden sm:inline">Settings</span>
+            </button>
 
-            {/* Hint label tooltip */}
-            <div className="absolute right-16 scale-0 group-hover:scale-100 transition-all origin-right bg-slate-800 text-white text-[9px] px-2 py-1 rounded whitespace-nowrap shadow-md pointer-events-none tracking-wide">
-              Hand Gripper <span className="text-slate-400">Drag to Pan</span>
-            </div>
-          </div>
+            {/* DROPDOWN MENU */}
+            {isSettingsOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setIsSettingsOpen(false)} />
+                <div className="absolute right-0 mt-2 w-60 z-20 bg-white/90 dark:bg-slate-900/95 backdrop-blur-2xl rounded-2xl p-4 shadow-2xl border border-slate-200/40 dark:border-slate-800/25 flex flex-col gap-3.5 animate-scale-up text-xs">
+                  {/* Grid Selection */}
+                  <div>
+                    <span className="block text-[9px] uppercase tracking-wider font-mono font-bold text-slate-450 dark:text-slate-500 mb-1.5">
+                      Background Grid
+                    </span>
+                    <div className="flex gap-1 bg-slate-100/40 dark:bg-slate-950/40 p-0.5 rounded-lg border border-slate-200/30 dark:border-slate-800/10">
+                      {(['none', 'dots', 'lines'] as GridType[]).map(type => (
+                        <button
+                          key={type}
+                          onClick={() => setGridType(type)}
+                          className={`flex-1 py-1 text-[10px] font-semibold rounded-md capitalize transition ${
+                            gridType === type
+                              ? 'bg-white dark:bg-slate-800 text-slate-950 dark:text-white shadow-sm font-bold'
+                              : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 font-normal'
+                          }`}
+                        >
+                          {type}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
 
-          {/* Zoom & Fit Control Controls panel */}
-          <div className="flex items-center gap-1 bg-white/85 dark:bg-slate-900/85 backdrop-blur-2xl border border-slate-200/50 dark:border-slate-800/40 rounded-xl p-1 shadow-xl text-xs">
-            {/* Zoom Out Button */}
-            <button
-              onClick={zoomOut}
-              className="w-7.5 h-7.5 flex items-center justify-center hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-500 hover:text-slate-950 dark:hover:text-white transition cursor-pointer"
-              title="Zoom Out"
-            >
-              <ZoomOut className="w-3.5 h-3.5" />
-            </button>
-            
-            {/* Scale Percent Indicator and Fit To Screen toggle */}
-            <button
-              onClick={fitToScreen}
-              className="px-1.5 h-7.5 font-mono font-semibold rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-[10px] min-w-14 text-center transition text-slate-700 dark:text-slate-350 cursor-pointer flex flex-col justify-center items-center group/btn relative"
-              title="Fit to Screen/Center view"
-            >
-              <span className="leading-tight">{Math.round(scale * 100)}%</span>
-              <span className="text-[7.5px] text-blue-500 dark:text-blue-400 uppercase tracking-widest font-bold font-sans">Fit</span>
-            </button>
-            
-            {/* Zoom In Button */}
-            <button
-              onClick={zoomIn}
-              className="w-7.5 h-7.5 flex items-center justify-center hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-500 hover:text-slate-950 dark:hover:text-white transition cursor-pointer"
-              title="Zoom In"
-            >
-              <ZoomIn className="w-3.5 h-3.5" />
-            </button>
+                  {/* Snap To Grid Toggle */}
+                  <div className="flex items-center justify-between border-t border-slate-200/20 dark:border-slate-800/15 pt-3">
+                    <span className="text-[9px] uppercase tracking-wider font-mono font-bold text-slate-450 dark:text-slate-500">
+                      Snap to Grid
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={snapToGrid}
+                      onChange={e => setSnapToGrid(e.target.checked)}
+                      className="w-4 h-4 accent-slate-800 dark:accent-white rounded border-slate-300 dark:bg-slate-800 cursor-pointer"
+                    />
+                  </div>
+
+                  {/* Theme Mode Toggle (In settings) */}
+                  <div className="flex items-center justify-between border-t border-slate-200/20 dark:border-slate-800/15 pt-3">
+                    <span className="text-[9px] uppercase tracking-wider font-mono font-bold text-slate-450 dark:text-slate-500">
+                      Theme Mode
+                    </span>
+                    <button
+                      onClick={() => setIsDarkMode(prev => !prev)}
+                      className="flex items-center gap-1.5 py-1 px-2.5 bg-slate-100/60 dark:bg-slate-800/70 hover:bg-slate-200/70 dark:hover:bg-slate-700 rounded-lg text-[10px] font-medium transition cursor-pointer text-slate-700 dark:text-slate-330"
+                    >
+                      {isDarkMode ? (
+                        <>
+                          <Sun className="w-3.5 h-3.5 text-amber-500" />
+                          <span>Light Mode</span>
+                        </>
+                      ) : (
+                        <>
+                          <Moon className="w-3.5 h-3.5 text-indigo-400" />
+                          <span>Dark Mode</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Keyboard Shortcuts Guides (In settings) */}
+                  <div className="border-t border-slate-200/20 dark:border-slate-800/15 pt-3">
+                    <button
+                      onClick={() => {
+                        setIsShortcutsOpen(true);
+                        setIsSettingsOpen(false);
+                      }}
+                      className="w-full flex items-center justify-center gap-1.5 py-1.5 px-3 bg-slate-100/60 dark:bg-slate-800/70 hover:bg-slate-200/70 dark:hover:bg-slate-700 rounded-lg text-[10px] font-semibold transition cursor-pointer text-slate-650 dark:text-slate-300"
+                    >
+                      <HelpCircle className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Open Keyboard Guides</span>
+                    </button>
+                  </div>
+
+                  {/* Reset Canvas */}
+                  <div className="border-t border-slate-200/20 dark:border-slate-800/15 pt-2">
+                    <button
+                      onClick={() => {
+                        if (confirm('Are you sure you want to clear your entire Doodle canvas?')) {
+                          clearCanvas();
+                          setIsSettingsOpen(false);
+                        }
+                      }}
+                      className="w-full flex items-center justify-center gap-1.5 py-2 bg-red-500 hover:bg-red-650 text-white font-medium rounded-lg text-[11px] hover:scale-[1.01] transition active:scale-95 cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Clear Doodle</span>
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
+
+        {/* FLOAT BAR TOOLBAR BOTTOM OR SAFE CORNER */}
+        {!(isProfileOpen || isShortcutsOpen || (isSidebarOpen && window.innerWidth < 768) || (isSidebarOpen && isLandscapeMobile)) && (
+          <div className={isLandscapeMobile
+            ? "absolute bottom-3 right-3 z-10 flex flex-col items-end gap-2 max-w-[45vw]"
+            : "absolute bottom-[calc(1.5rem+env(safe-area-inset-bottom,0px))] left-1/2 -translate-x-1/2 z-10 flex flex-col items-center gap-3 w-max max-w-[92vw]"
+          }>
+            <Toolbar
+              currentTool={currentTool}
+              setTool={handleQuickPresetSelection}
+              color={color}
+              setColor={changeColor}
+              fillColor={fillColor}
+              setFillColor={changeFillColor}
+              strokeWidth={strokeWidth}
+              setStrokeWidth={changeStrokeWidth}
+              strokeStyle={strokeStyle}
+              setStrokeStyle={changeStrokeStyle}
+              fontSize={fontSize}
+              setFontSize={changeFontSize}
+              onAddImage={handleAddImage}
+            />
+          </div>
+        )}
 
         {/* WHITEBOARD HTML5 CANVAS INTERACTIVE STAGE */}
         <div 
@@ -2916,6 +2793,7 @@ ${svgNodes}</svg>`;
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerCancel}
+            onDoubleClick={handleDoubleClick}
             onWheel={handleWheel}
             onDragOver={handleDragOver}
             onDrop={handleDrop}
@@ -2924,9 +2802,9 @@ ${svgNodes}</svg>`;
           />
 
           {/* QUICK EDIT FLOATING INTERACTIVE MENU PANEL FOR SELECTED WHITEBOARD ELEMENTS */}
-          {floatMenuPos && selectedElement && (
+          {!(isProfileOpen || isShortcutsOpen || (isSidebarOpen && window.innerWidth < 768) || (isSidebarOpen && isLandscapeMobile)) && floatMenuPos && selectedElement && (
             <div
-              className="absolute z-40 flex items-center gap-1 p-1 bg-white/95 dark:bg-slate-900/95 backdrop-blur-2xl rounded-xl shadow-2xl border border-slate-200/50 dark:border-slate-800/40 animate-scale-up text-[10px] sm:text-xs pointer-events-auto"
+              className="absolute z-40 flex flex-nowrap items-center gap-1.5 p-1.5 bg-white/95 dark:bg-slate-900/95 backdrop-blur-2xl rounded-xl shadow-2xl border border-slate-200/50 dark:border-slate-800/40 animate-scale-up text-xs pointer-events-auto shrink-0 select-none"
               style={{
                 left: `${floatMenuPos.left}px`,
                 top: `${floatMenuPos.top}px`,
@@ -2937,77 +2815,79 @@ ${svgNodes}</svg>`;
                 <>
                   <button
                     onClick={handleSmoothSelectedSketch}
-                    className="flex items-center gap-1 px-1.5 py-1 hover:bg-slate-100 dark:hover:bg-slate-800/60 rounded-lg text-slate-700 dark:text-slate-350 transition font-medium cursor-pointer"
-                    title="Smooth/Beautify shaky stroke points"
+                    className="flex items-center justify-center p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800/60 rounded-lg text-slate-700 dark:text-slate-350 transition font-medium cursor-pointer shrink-0"
+                    title="Smooth shaky stroke points"
                   >
-                    <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                    <span>Smooth</span>
+                    <Sparkles className="w-4 h-4 text-amber-500" />
+                    {!isLandscapeMobile && window.innerWidth >= 640 && <span className="ml-1 text-[11px]">Smooth</span>}
                   </button>
 
                   <button
                     onClick={handleTogglePenType}
-                    className="flex items-center gap-1 px-1.5 py-1 hover:bg-slate-100 dark:hover:bg-slate-800/60 rounded-lg text-slate-700 dark:text-slate-350 transition font-medium cursor-pointer border-r border-slate-200/40 dark:border-slate-800/30 pr-1.5"
-                    title="Toggle pen solid stroke vs highlighter transparency"
+                    className="flex items-center justify-center p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800/60 rounded-lg text-slate-700 dark:text-slate-350 transition font-medium cursor-pointer shrink-0 border-r border-slate-200/40 dark:border-slate-800/30 pr-2"
+                    title="Toggle Pen vs Highlighter"
                   >
-                    <span className="font-mono text-[9px] px-1 bg-slate-150 dark:bg-slate-800 rounded">
-                      {selectedElement.type === 'pen' ? 'Pen' : 'Highlighter'}
-                    </span>
-                    <span>Toggle</span>
+                    {selectedElement.type === 'pen' ? <Pencil className="w-4 h-4 text-violet-500" /> : <Highlighter className="w-4 h-4 text-violet-500" />}
+                    {!isLandscapeMobile && window.innerWidth >= 640 && <span className="ml-1 text-[11px]">Toggle</span>}
                   </button>
 
                   {/* Convert Sketch to Vector Option Choices */}
-                  <div className="flex items-center gap-1 border-r border-slate-200/40 dark:border-slate-800/30 px-1.5 opacity-90 hover:opacity-100 transition">
-                    <span className="text-slate-400 font-mono text-[9px] uppercase tracking-wider select-none shrink-0 mr-0.5">Auto-Convert:</span>
+                  <div className="flex items-center gap-1 border-r border-slate-200/40 dark:border-slate-800/30 px-1.5 opacity-90 hover:opacity-100 transition shrink-0">
+                    {!isLandscapeMobile && window.innerWidth >= 640 && (
+                      <span className="text-slate-400 font-mono text-[9px] uppercase tracking-wider select-none shrink-0 mr-1">
+                        Convert:
+                      </span>
+                    )}
                     <button
                       onClick={() => handleConvertSketchToShape('rectangle')}
-                      className="px-1 py-0.5 bg-slate-100/60 dark:bg-slate-800/50 hover:bg-slate-200/70 rounded text-[9px] font-mono border border-slate-200/30 dark:border-slate-800/15 cursor-pointer"
-                      title="Convert to perfect rectangle"
+                      className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800/50 rounded cursor-pointer"
+                      title="Convert to Rectangle"
                     >
-                      Rect
+                      <Square className="w-3.5 h-3.5 text-slate-600 dark:text-slate-350" />
                     </button>
                     <button
                       onClick={() => handleConvertSketchToShape('ellipse')}
-                      className="px-1 py-0.5 bg-slate-100/60 dark:bg-slate-800/50 hover:bg-slate-200/70 rounded text-[9px] font-mono border border-slate-200/30 dark:border-slate-800/15 cursor-pointer"
-                      title="Convert to perfect circle"
+                      className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800/50 rounded cursor-pointer"
+                      title="Convert to Ellipse/Circle"
                     >
-                      Circle
+                      <Circle className="w-3.5 h-3.5 text-slate-600 dark:text-slate-350" />
                     </button>
                     <button
                       onClick={() => handleConvertSketchToShape('line')}
-                      className="px-1 py-0.5 bg-slate-100/60 dark:bg-slate-800/50 hover:bg-slate-200/70 rounded text-[9px] font-mono border border-slate-200/30 dark:border-slate-800/15 cursor-pointer"
-                      title="Convert to straight line"
+                      className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800/50 rounded cursor-pointer"
+                      title="Convert to Line"
                     >
-                      Line
+                      <Minus className="w-3.5 h-3.5 text-slate-600 dark:text-slate-350" />
                     </button>
                     <button
                       onClick={() => handleConvertSketchToShape('arrow')}
-                      className="px-1 py-0.5 bg-slate-100/60 dark:bg-slate-800/50 hover:bg-slate-200/70 rounded text-[9px] font-mono border border-slate-200/30 dark:border-slate-800/15 cursor-pointer"
-                      title="Convert to arrow"
+                      className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800/50 rounded cursor-pointer"
+                      title="Convert to Arrow"
                     >
-                      Arrow
+                      <ArrowUpRight className="w-3.5 h-3.5 text-slate-600 dark:text-slate-350" />
                     </button>
                   </div>
                 </>
               )}
 
               {/* Standard actions for all types of elements */}
-              <div className="flex items-center gap-1 pl-1">
+              <div className="flex items-center gap-1.5 pl-1 shrink-0">
                 <button
                   onClick={handleDuplicateSelected}
-                  className="flex items-center gap-1 px-1.5 py-1 hover:bg-slate-100 dark:hover:bg-slate-800/60 rounded-lg text-slate-700 dark:text-slate-350 transition font-medium cursor-pointer"
-                  title="Make an offset duplicate of this element"
+                  className="flex items-center justify-center p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800/60 rounded-lg text-slate-700 dark:text-slate-350 transition font-medium cursor-pointer shrink-0"
+                  title="Make duplicate of this element"
                 >
-                  <Copy className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Duplicate</span>
+                  <Copy className="w-4 h-4" />
+                  {!isLandscapeMobile && window.innerWidth >= 640 && <span className="ml-1 text-[11px]">Duplicate</span>}
                 </button>
 
                 <button
                   onClick={handleDeleteSelected}
-                  className="flex items-center gap-1 px-1.5 py-1 hover:bg-red-50 dark:hover:bg-red-950/20 text-red-650 rounded-lg transition font-medium cursor-pointer"
+                  className="flex items-center justify-center p-1.5 hover:bg-red-50 dark:hover:bg-red-950/20 text-red-650 rounded-lg transition font-medium cursor-pointer shrink-0"
                   title="Erase or remove this element"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Delete</span>
+                  <Trash2 className="w-4 h-4" />
+                  {!isLandscapeMobile && window.innerWidth >= 640 && <span className="ml-1 text-[11px]">Delete</span>}
                 </button>
               </div>
             </div>
@@ -3046,6 +2926,16 @@ ${svgNodes}</svg>`;
 
       {/* HELPFUL HOTKEYS MODAL GUIDES */}
       <ShortcutsModal isOpen={isShortcutsOpen} onClose={() => setIsShortcutsOpen(false)} />
+      <ProfileModal isOpen={isProfileOpen} onClose={() => setIsProfileOpen(false)} />
+      <PermissionModal
+        isOpen={permissionModalOpen}
+        onClose={() => {
+          setPermissionModalOpen(false);
+          setOnPermissionGrantedCallback(null);
+        }}
+        onGrant={handleGrantPermission}
+        type={permissionType}
+      />
     </div>
   );
 }

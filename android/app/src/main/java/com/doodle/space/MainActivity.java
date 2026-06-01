@@ -1,4 +1,4 @@
-package com.ace.board;
+package com.doodle.space;
 
 import com.getcapacitor.BridgeActivity;
 

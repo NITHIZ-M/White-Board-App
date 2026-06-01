@@ -8,8 +8,6 @@ interface ShortcutsModalProps {
 
 const SHORTCUTS = [
   { keys: ['V'], desc: 'Select Pointer mode (select/move/resize elements)' },
-  { keys: ['H'], desc: 'Hand Tool (panning canvas)' },
-  { keys: ['Space', 'Drag'], desc: 'Quick-Pan (hold Spacebar and drag canvas)' },
   { keys: ['P'], desc: 'Pen sketching tool' },
   { keys: ['Y'], desc: 'Highlighter Pen tool' },
   { keys: ['L'], desc: 'Line drawing tool' },
@@ -21,8 +19,7 @@ const SHORTCUTS = [
   { keys: ['E'], desc: 'Eraser (click elements or drag over to erase)' },
   { keys: ['Ctrl', 'Z'], desc: 'Undo last change' },
   { keys: ['Ctrl', 'Y'], desc: 'Redo last change' },
-  { keys: ['Ctrl', '+ / - / Scroll'], desc: 'Infinite Zoom In / Out centered on cursor' },
-  { keys: ['Backspace', 'Delete'], desc: 'Delete currently selected whiteboard element' },
+  { keys: ['Backspace', 'Delete'], desc: 'Delete currently selected Doodle element' },
 ];
 
 export default function ShortcutsModal({ isOpen, onClose }: ShortcutsModalProps) {
@@ -34,9 +31,9 @@ export default function ShortcutsModal({ isOpen, onClose }: ShortcutsModalProps)
         {/* MODAL HEADER */}
         <div className="p-4 border-b border-slate-200/30 dark:border-slate-800/10 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <HelpCircle className="w-5 h-5 text-slate-700 dark:text-slate-350" />
+            <HelpCircle className="w-5 h-5 text-slate-700 dark:text-slate-355" />
             <span className="font-semibold text-slate-900 dark:text-white text-sm font-sans tracking-wide">
-              Whiteboard Guides & Keybindings
+              Doodle Space Guides & Keybindings
             </span>
           </div>
           <button
@@ -49,14 +46,14 @@ export default function ShortcutsModal({ isOpen, onClose }: ShortcutsModalProps)
 
         {/* GUIDES AND SHORTCUTS LIST */}
         <div className="p-4 overflow-y-auto space-y-4 text-xs scrollbar-thin">
-          {/* SECRETS TO INFINITE CANVAS */}
+          {/* HELP AND TIP BOX */}
           <div className="p-3 bg-white/25 dark:bg-slate-900/20 rounded-xl border border-slate-200/30 dark:border-slate-800/10">
             <h4 className="font-bold text-slate-800 dark:text-white uppercase tracking-wide text-[10px] font-mono mb-1.5 flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-500 animate-ping" />
-              Pro Tips: Infinite Zoom & Pan
+              Pro Tips: Snapping & Editing
             </h4>
             <p className="text-slate-600 dark:text-slate-300 leading-relaxed text-[11px]">
-              Use your **Trackpad (pinch to zoom, 2-finger drag to pan)** or **Mouse scroll wheel (scroll to zoom, drag with scrollwheel or hold Spacebar to pan)**. The zoom is calculated dynamically centering precisely on your mouse pointer, creating a completely seamless vectorspace exploration!
+              Turn on **Snap to Grid** in the canvas settings dropdown to make shapes align perfectly. Double-click on any existing text or sticky note to start editing its content instantly. Use the Selection Tool to move and resize components easily!
             </p>
           </div>
 

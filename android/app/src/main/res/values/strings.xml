@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">ACE Board</string>
-    <string name="title_activity_main">ACE Board</string>
-    <string name="package_name">com.ace.board</string>
-    <string name="custom_url_scheme">com.ace.board</string>
+    <string name="app_name">Doodle Space</string>
+    <string name="title_activity_main">Doodle Space</string>
+    <string name="package_name">com.doodle.space</string>
+    <string name="custom_url_scheme">com.doodle.space</string>
 </resources>
